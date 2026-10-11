@@ -107,6 +107,7 @@ class PlannerAgent:
         self.client = client
         self.offline_fallback = offline_fallback
         self.heuristic = HeuristicPlanner()
+        self.last_error: str | None = None
 
     def plan(
         self,
@@ -115,10 +116,12 @@ class PlannerAgent:
         design_answers: dict[str, Any] | None = None,
         prior_plan: AnalysisPlan | None = None,
     ) -> AnalysisPlan:
+        self.last_error = None
         if self.client is not None:
             try:
                 return self._llm_plan(question, profile, design_answers, prior_plan)
             except (LLMError, PlanGenerationError) as exc:
+                self.last_error = str(exc)
                 if not self.offline_fallback:
                     raise
                 plan = self.heuristic.plan(question, profile, design_answers)
@@ -199,6 +202,18 @@ DESCRIBE_WORDS = ("average", "mean", "median", "describe", "summarize", "summary
 PAIRED_HINT_WORDS = ("before", "after", "pre-test", "post-test", "前测", "后测", "前后", "培训后", "治疗后", "improvement after")
 
 
+#: Lightweight synonym expansion for column-name matching: a QUESTION word
+#: maps to the column tokens it can refer to ("study time" -> hours).
+_COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
+    "time": ("hours", "hour"),
+    "grade": ("score", "result"),
+    "result": ("score", "grade"),
+    "income": ("salary", "earnings"),
+    "salary": ("income",),
+    "earnings": ("income", "salary"),
+}
+
+
 def _column_tokens(name: str) -> list[str]:
     tokens = [t for t in re.split(r"[^a-z0-9\u4e00-\u9fff]+", name.lower()) if len(t) >= 2]
     if not tokens and len(name) == 1:
@@ -246,6 +261,13 @@ class HeuristicPlanner:
                     len(name) == 1 and re.search(rf"\b{re.escape(name)}\b", q)
                 )
                 if not hit:
+                    # Synonym matching: "study time" ~ a column named hours.
+                    hit = any(
+                        t in _COLUMN_ALIASES.get(qw, ())
+                        for qw in q_words
+                        for t in tokens
+                    )
+                if not hit:
                     # Prefix matching: satisfied ~ satisfaction, ratings ~ rating.
                     for t in tokens:
                         if any(
@@ -288,6 +310,7 @@ class HeuristicPlanner:
         clarifications: list[ClarificationQuestion] = []
         sid = 0
         limitations: list[str] = []
+        goal = "No analysis steps could be determined"
 
         def add(tool: str, params: dict, rationale: str, variables: list[str]) -> None:
             nonlocal sid
@@ -600,11 +623,10 @@ class HeuristicPlanner:
                     goal = f"Descriptive comparison of {a_c.name} and {b_c.name}"
             elif wants_relation and len(mn) >= 2:
                 x, y = mn[0].name, mn[1].name
-                method = "spearman" if (
-                    mn[0].variable_type == VariableType.NUMERIC_DISCRETE
-                    or mn[1].variable_type == VariableType.NUMERIC_DISCRETE
-                    or skewed
-                ) else "pearson"
+                pair_skewed = any(
+                    abs((c.numeric.skewness or 0) if c.numeric else 0) > 1 for c in mn[:2]
+                )
+                method = "spearman" if pair_skewed else "pearson"
                 add("correlation_test", {"x": x, "y": y, "method": method},
                     f"Assess association between {x} and {y}.", [x, y])
                 goal = f"Association between {x} and {y}"
@@ -619,6 +641,42 @@ class HeuristicPlanner:
                 add("correlation_test", {"x": x, "y": y, "method": "spearman"},
                     f"Rank association between ordinal {x} and {y}.", [x, y])
                 goal = f"Rank association between {x} and {y}"
+            elif (wants_relation or design.causal_question is True) and not ordinal_cols and len(mc) == 1 and len(mn) >= 1 and mc[0].n_unique >= 2:
+                # Association between one categorical and one numeric variable:
+                # compare the numeric across the categorical groups.
+                g, v = mc[0], mn[0]
+                ga, gb = group_pair(g)
+                if design.sample_type == "unknown":
+                    ask("sample_type",
+                        f"Are the groups in '{g.name}' independent samples, or "
+                        "paired/repeated measurements?",
+                        ["independent", "paired"],
+                        "The correct test differs: Welch t-test for independent "
+                        "samples vs paired t-test for matched data.")
+                tool = "mann_whitney_u" if (v.variable_type == VariableType.CATEGORICAL_ORDINAL or skewed) else "ttest_two_sample"
+                add(tool,
+                    {"column": v.name, "group_column": g.name, "group_a": ga, "group_b": gb},
+                    f"Compare {v.name} between groups of {g.name}.", [v.name, g.name])
+                goal = f"Association of {v.name} with {g.name}"
+            elif (wants_relation or design.causal_question is True) and not ordinal_cols and len(mc) < 2 and len(numeric) == 2 and mn:
+                # Association question with exactly one name-matched numeric
+                # column (synonyms like "study time" ~ hours may hide the
+                # other one). With exactly two numeric columns available,
+                # associate them — but only when the question already matched
+                # at least one column, so unrelated questions about variables
+                # that don't exist still fail loudly.
+                # Association question but fewer than two columns were matched
+                # by name (synonyms like "study time" ~ hours). With exactly
+                # two numeric columns available, associate them.
+                x, y = numeric[0].name, numeric[1].name
+                pair_skewed = any(
+                    abs((c.numeric.skewness or 0) if c.numeric else 0) > 1 for c in numeric
+                )
+                method = "spearman" if pair_skewed else "pearson"
+                add("correlation_test", {"x": x, "y": y, "method": method},
+                    f"Assess association between {x} and {y} (the only two "
+                    "numeric columns in the dataset).", [x, y])
+                goal = f"Association between {x} and {y}"
             elif len(mc) >= 2 and (wants_relation or causal or "是否" in question):
                 add("chi_square_test", {"column_a": mc[0].name, "column_b": mc[1].name},
                     f"Test independence of {mc[0].name} and {mc[1].name}.",
@@ -642,6 +700,17 @@ class HeuristicPlanner:
                     add("ttest_one_sample", {"column": colp.name, "mu0": mu0},
                         f"One-sample t-test of {colp.name} against {mu0}.", [colp.name])
                     goal = f"One-sample t-test of {colp.name} vs {mu0}"
+            elif not mn and not mc and (
+                wants_relation or wants_compare or wants_regression or causal or explicit
+            ):
+                # The question clearly asks for an analysis, but no column
+                # could be matched. Fail loudly instead of silently
+                # summarizing an unrelated column.
+                limitations.append(
+                    "Could not find any columns matching the variables in the "
+                    f"question. Available columns: {', '.join(profile.names()) or '(none)'}."
+                )
+                goal = "No matching variables found"
             elif wants_describe and num_col:
                 add("describe_variable", {"column": num_col.name},
                     f"Summarize {num_col.name}.", [num_col.name])
@@ -652,7 +721,7 @@ class HeuristicPlanner:
                 goal = f"Exploratory summary of {num_col.name}"
 
         plan = AnalysisPlan(
-            goal=goal if steps else "No analysis steps could be determined",
+            goal=goal,
             design=design,
             steps=steps,
             clarifications=clarifications,

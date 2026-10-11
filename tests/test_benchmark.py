@@ -108,6 +108,19 @@ def test_interpretation_rubric():
     assert interpretation_score(cm, good) == 1.0
 
 
+def test_null_claim_marker_negation_aware_scoring():
+    """Bug 2 regression in the benchmark rubric: a correct disclaimer must
+    not be scored as the forbidden 'no effect' misinterpretation."""
+    ie01 = build_ground_truth([t for t in TASKS if t.id == "IE-01"])[0]
+    good = {"interpretation": (
+        "The result is not statistically significant — the evidence is "
+        "insufficient to detect an effect, not that no effect exists."
+    )}
+    bad = {"interpretation": "This proves there is no effect at all."}
+    assert interpretation_score(ie01, good) == 1.0
+    assert interpretation_score(ie01, bad) < 1.0
+
+
 def test_score_task_fields():
     task = build_ground_truth([TASKS[0]])[0]
     outcome = {

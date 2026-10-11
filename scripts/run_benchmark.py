@@ -29,9 +29,14 @@ def main() -> None:
     parser.add_argument("--out", type=str, default="", help="Output directory (default: runs/benchmark/<label>).")
     parser.add_argument("--label", type=str, default="", help="Run label (default: timestamped).")
     parser.add_argument("--smoke", action="store_true", help="Pipeline smoke run with a scripted mock LLM for System A.")
+    parser.add_argument("--offline", action="store_true", help="Force the offline heuristic planner (never calls the API).")
     args = parser.parse_args()
 
     config = get_config()
+    if args.offline:
+        from statagent.config import load_config
+
+        config = load_config({})
     client = create_client(config.llm, config.pricing)
     print(f"LLM mode: {config.llm_mode} (model: {config.llm.model})")
 

@@ -123,8 +123,12 @@ Raw data: `runs/benchmark/smoke60/results.jsonl` (180 records),
 
 ### 5.2 Live-LLM experiment — PENDING
 
-Not executed: requires a DeepSeek API key, which was not available in this
-environment. The run command is ready:
+**API status update (2026-10-11):** a DeepSeek API key is now configured
+via the project `.env`, the app reports live mode, and a minimal
+connectivity call succeeded (1 call, 9+1 tokens, cost ≈ $0.000004). The
+full 60-task live benchmark has **not** been run — running it costs real
+money (~$0.5–1) and requires explicit user authorization. The command is
+ready:
 
 ```
 python scripts/run_benchmark.py --label live_2026XXXX

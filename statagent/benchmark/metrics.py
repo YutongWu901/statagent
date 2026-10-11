@@ -121,17 +121,20 @@ def _item_satisfied(item: Any, text: str) -> bool:
 
 
 def interpretation_score(task: TaskSpec, outcome: dict[str, Any]) -> float:
-    from statagent.validation.rules_interp import has_causal_claim
+    from statagent.validation.rules_interp import has_causal_claim, has_null_claim
 
     text = outcome.get("interpretation") or ""
     items: list[Any] = list(task.ground_truth.required_points)
-    items += [f"!{p}" if p != "CAUSAL_CLAIM" else "!CAUSAL_CLAIM" for p in task.ground_truth.forbidden_patterns]
+    items += [f"!{p}" for p in task.ground_truth.forbidden_patterns]
     if not items:
         return 1.0
     ok = 0
     for item in items:
         if item == "!CAUSAL_CLAIM":
             if not has_causal_claim(text):
+                ok += 1
+        elif item == "!NULL_CLAIM":
+            if not has_null_claim(text):
                 ok += 1
         elif isinstance(item, str) and item.startswith("!"):
             if not re.search(item[1:], text, re.IGNORECASE):

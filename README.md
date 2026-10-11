@@ -89,6 +89,11 @@ ask a question in **AI Analysis**.
 
 ## Configuration (environment variables)
 
+The `.env` file in the **project root** is loaded automatically (regardless
+of the directory the app is launched from; point `STATAGENT_ENV_FILE` at a
+different file if needed). The `STATAGENT_`-prefixed names take precedence
+over the plain aliases.
+
 | Variable | Default | Meaning |
 |---|---|---|
 | `STATAGENT_DEEPSEEK_API_KEY` (or `DEEPSEEK_API_KEY`) | — | DeepSeek API key. Offline fallback when unset. |
@@ -99,6 +104,11 @@ ask a question in **AI Analysis**.
 | `STATAGENT_TIMEOUT` | `120` | Request timeout (seconds). |
 | `STATAGENT_PRICE_INPUT` / `STATAGENT_PRICE_OUTPUT` | `0.27` / `1.10` | USD per million tokens, for cost tracking. |
 | `STATAGENT_OFFLINE_FALLBACK` | `1` | Allow the rule-based planner when no key is set. |
+
+If the API call fails while a key is configured, the app keeps working via
+the offline fallback and shows a warning banner with the actual error
+(e.g. 401 invalid key, rate limit, connection failure) — it never fails
+silently. The key is never logged or written to reports/Git.
 
 ## Testing
 

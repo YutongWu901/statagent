@@ -73,3 +73,23 @@ def test_profile_llm_context_contains_columns():
     profile = profile_frame(df, "ds1", "t.csv")
     ctx = profile.llm_context()
     assert "hours" in ctx and "score" in ctx
+
+
+# ---- Bug 1 regressions: type inference for hours/score ----------------------
+
+def test_bug1_hours_column_is_continuous():
+    """hours = 1..10 (10 distinct values) must NOT be classified discrete."""
+    vtype, _ = infer_variable_type(_series(list(range(1, 11))), "hours")
+    assert vtype == VariableType.NUMERIC_CONTINUOUS
+
+
+def test_bug1_score_column_is_not_ordinal():
+    """A column named 'score' with 10 distinct values is a continuous
+    outcome, not a categorical ordinal."""
+    vtype, _ = infer_variable_type(_series(list(range(10, 110, 10))), "score")
+    assert vtype == VariableType.NUMERIC_CONTINUOUS
+
+
+def test_likert_still_ordinal_by_name():
+    vtype, _ = infer_variable_type(_series([1, 2, 3, 4, 5, 1, 2]), "rating")
+    assert vtype == VariableType.CATEGORICAL_ORDINAL

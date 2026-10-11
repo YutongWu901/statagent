@@ -5,6 +5,10 @@ runs against any OpenAI-compatible provider (DeepSeek by default). Without an
 API key the application runs in an offline fallback mode: a deterministic
 rule-based planner replaces the LLM while all statistical computation stays
 identical.
+
+The `.env` file is read from the **project root** (next to this package), not
+from the process working directory, so launching the app from anywhere still
+picks it up. Set ``STATAGENT_ENV_FILE`` to point at a different file.
 """
 from __future__ import annotations
 
@@ -13,14 +17,30 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-try:  # load .env files when present (never required)
-    from dotenv import load_dotenv
-
-    load_dotenv()
-except ImportError:  # pragma: no cover
-    pass
-
 ENV_PREFIX = "STATAGENT_"
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _env_file() -> Path:
+    """Path of the .env file: STATAGENT_ENV_FILE override or project root."""
+    override = os.environ.get(ENV_PREFIX + "ENV_FILE")
+    if override:
+        return Path(override)
+    return _PROJECT_ROOT / ".env"
+
+
+def _load_dotenv_file() -> None:
+    """Load .env into os.environ. Idempotent; never overrides real env vars."""
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv(_env_file(), override=False)
+    except ImportError:  # pragma: no cover - dotenv is a declared dependency
+        pass
+
+
+_load_dotenv_file()
 
 
 def _env(env: dict[str, str], name: str, default: str) -> str:
@@ -76,6 +96,9 @@ class AppConfig:
 
 
 def load_config(env: dict[str, str] | None = None) -> AppConfig:
+    # Reload .env first (idempotent) so a file created/edited after the
+    # first import is still picked up on later loads (e.g. after restart).
+    _load_dotenv_file()
     if env is None:
         env = dict(os.environ)
     api_key = _env(env, "DEEPSEEK_API_KEY", "") or None

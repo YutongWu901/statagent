@@ -18,16 +18,12 @@ from statagent.models.dataset import (
 
 #: Thresholds for type inference on numeric columns.
 _BINARY_MAX_UNIQUE = 2
-_DISCRETE_MAX_UNIQUE = 10
+#: At most this many distinct values -> numeric_discrete (counts / few levels).
+#: Kept low so rounded continuous data (e.g. hours = 1..10, scores in steps of
+#: 10) is NOT misclassified as discrete.
+_DISCRETE_MAX_UNIQUE = 5
 #: Fraction of values that must parse for a string column to be treated as numeric.
 _NUMERIC_COERCION_MIN = 0.95
-
-
-def _is_integer_like(series: pd.Series) -> bool:
-    try:
-        return bool(np.all(np.equal(np.mod(series.dropna(), 1), 0)))
-    except TypeError:
-        return False
 
 
 def infer_variable_type(series: pd.Series, name: str) -> tuple[VariableType, pd.Series | None]:

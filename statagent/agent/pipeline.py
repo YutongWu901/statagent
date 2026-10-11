@@ -41,6 +41,8 @@ class AnalysisOutcome:
     validation: ValidationReport | None = None
     error: str | None = None
     plan: AnalysisPlan | None = None
+    #: Set when live-LLM planning failed and the offline fallback took over.
+    llm_warning: str | None = None
 
 
 class AnalysisPipeline:
@@ -85,12 +87,23 @@ class AnalysisPipeline:
     ) -> AnalysisOutcome:
         profile = store.profile(dataset_id)
         plan = self.planner.plan(question, profile, design_answers, prior_plan)
+        llm_warning = getattr(self.planner, "last_error", None)
 
         if plan.needs_clarification():
             return AnalysisOutcome(
                 status="clarification_needed",
                 questions=plan.clarifications or self._synthesize_questions(plan),
                 plan=plan,
+                llm_warning=llm_warning,
+            )
+
+        if not plan.steps:
+            message = "; ".join(plan.limitations) or (
+                "No analysis steps could be planned from the question and the "
+                "dataset — check that the question's variables exist in the data."
+            )
+            return AnalysisOutcome(
+                status="error", error=message, plan=plan, llm_warning=llm_warning
             )
 
         ctx = ValidationContext(
@@ -117,9 +130,11 @@ class AnalysisPipeline:
                         questions=self._synthesize_questions(plan),
                         validation=validation_before,
                         plan=plan,
+                        llm_warning=llm_warning,
                     )
                 return AnalysisOutcome(
-                    status="blocked", validation=validation_before, plan=plan
+                    status="blocked", validation=validation_before, plan=plan,
+                    llm_warning=llm_warning,
                 )
             if force and validation_before.blocked:
                 validation_before.override = True
@@ -128,7 +143,10 @@ class AnalysisPipeline:
         try:
             step_results = [execute_step(store, s) for s in plan.steps]
         except Exception as exc:  # noqa: BLE001 - execute_step already wraps; belt & braces
-            return AnalysisOutcome(status="error", error=f"{type(exc).__name__}: {exc}")
+            return AnalysisOutcome(
+                status="error", error=f"{type(exc).__name__}: {exc}",
+                llm_warning=llm_warning,
+            )
 
         ctx.step_results = step_results
         interpretation = self.interpreter.interpret(
@@ -149,6 +167,9 @@ class AnalysisPipeline:
                         "key": item.get("key", ""),
                     }
                 )
+        llm_meta = self.llm_meta()
+        if llm_warning:
+            llm_meta["warning"] = llm_warning
         record = AnalysisRecord(
             record_id=f"rec_{datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:6]}",
             question=question,
@@ -162,7 +183,7 @@ class AnalysisPipeline:
             interpretation=interpretation,
             validation_after=validation_after,
             engine_version=__version__,
-            llm=self.llm_meta(),
+            llm=llm_meta,
             seed=self.config.seed,
         )
         if save_dir is not None:
@@ -171,7 +192,10 @@ class AnalysisPipeline:
             (save_dir / f"{record.record_id}.json").write_text(
                 json_dumps(record.model_dump(mode="json")), encoding="utf-8"
             )
-        return AnalysisOutcome(status="completed", record=record, validation=validation_before)
+        return AnalysisOutcome(
+            status="completed", record=record, validation=validation_before,
+            llm_warning=llm_warning,
+        )
 
     @staticmethod
     def _synthesize_questions(plan: AnalysisPlan) -> list[ClarificationQuestion]:

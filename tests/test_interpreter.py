@@ -109,3 +109,29 @@ def test_llm_interpreter_receives_validation_context():
                                    message="outliers present"))
     InterpreterAgent(mock).interpret("q", AnalysisPlan(goal="g"), [], report)
     assert "DATA-05" in seen["user"]
+
+
+# ---- Bug 2 regression: the template's own disclaimer must pass INTERP-03 ----
+
+def test_template_nonsignificant_interpretation_passes_interp03():
+    """The offline template's 'not that no effect exists' phrasing must not
+    be flagged by the interpretation validation engine."""
+    from statagent.validation.context import ValidationContext
+    from statagent.validation.engine import ValidationEngine
+
+    step = StepResult(
+        step_id=1,
+        tool="correlation_test",
+        result=ToolResult(
+            tool="correlation_test", ok=True, n=50,
+            summary={"method": "pearson", "r": 0.08, "p_value": 0.42,
+                     "ci95_r": [-0.2, 0.35], "r_squared": 0.0064, "n": 50},
+        ),
+    )
+    interp = InterpreterAgent(None).interpret(
+        "Is x associated with y?", AnalysisPlan(goal="g"), [step], None
+    )
+    ctx = ValidationContext(step_results=[step], interpretation_text=interp.text)
+    findings = ValidationEngine().validate_interpretation(ctx).findings
+    statuses = {f.rule_id: f.status for f in findings}
+    assert statuses.get("INTERP-03") != "FAIL"

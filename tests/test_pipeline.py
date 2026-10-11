@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from statagent.agent.pipeline import AnalysisPipeline
 from statagent.config import load_config
 from statagent.data.store import DatasetStore
@@ -93,3 +95,54 @@ def test_offline_meta_recorded():
     ds = store.add(gen_study_hours(), "s.csv")
     out = make_pipe().analyze("Is study time associated with exam score?", store, ds)
     assert out.record.llm["mode"] == "offline"
+
+
+# ---- Bug 1 regressions ------------------------------------------------------
+
+def test_bug1_hours_score_end_to_end_pearson_r_is_one():
+    """The exact user scenario: hours 1..10, score 10..100, association
+    question. Must plan Pearson correlation and compute r = 1.0."""
+    import pandas as pd
+
+    store = DatasetStore()
+    ds = store.add(
+        pd.DataFrame({"hours": range(1, 11), "score": range(10, 110, 10)}),
+        "bug1.csv",
+    )
+    out = make_pipe().analyze("Is study time associated with exam score?", store, ds)
+    assert out.status == "completed", out.error
+    step = out.record.step_results[0].result
+    assert step.tool == "correlation_test"
+    assert step.summary["method"] == "pearson"
+    assert step.summary["r"] == pytest.approx(1.0, abs=1e-9)
+    assert step.summary["p_value"] < 1e-6
+
+
+def test_bug1_variable_mismatch_reports_error_not_wrong_method():
+    """Asking about variables that don't exist must produce a clear error,
+    not silently run an unrelated analysis."""
+    import pandas as pd
+
+    store = DatasetStore()
+    ds = store.add(
+        pd.DataFrame({"hours": range(1, 11), "score": range(10, 110, 10)}),
+        "bug1.csv",
+    )
+    out = make_pipe().analyze("Is smoking associated with hypertension?", store, ds)
+    assert out.status == "error"
+    assert "Could not find any columns" in out.error
+
+
+# ---- Bug 3 regressions ------------------------------------------------------
+
+def test_llm_failure_surfaces_warning_and_falls_back():
+    from statagent.agent.llm import MockLLM
+
+    mock = MockLLM().on(lambda m: True, lambda m: type("R", (), {"content": "garbage{{", "tool_calls": []})())
+    pipe = AnalysisPipeline(load_config({}), client=mock)
+    store = DatasetStore()
+    ds = store.add(gen_study_hours(), "s.csv")
+    out = pipe.analyze("Is study time associated with exam score?", store, ds)
+    assert out.status == "completed"  # heuristic fallback
+    assert out.llm_warning
+    assert out.record.llm.get("warning")

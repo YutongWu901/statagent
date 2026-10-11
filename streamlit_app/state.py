@@ -9,8 +9,9 @@ from statagent.data.store import DatasetStore
 
 
 def init_state() -> None:
-    if "cfg" not in st.session_state:
-        st.session_state.cfg = get_config()
+    # Recompute every rerun so .env / config edits take effect immediately
+    # (get_config is cached per process, so this is cheap).
+    st.session_state.cfg = get_config()
     if "store" not in st.session_state:
         st.session_state.store = DatasetStore()
     if "records" not in st.session_state:
@@ -19,10 +20,10 @@ def init_state() -> None:
         st.session_state.pending = None
     if "blocked" not in st.session_state:
         st.session_state.blocked = None
-    if "ai_question" not in st.session_state:
-        st.session_state.ai_question = ""
-    if "ai_dataset" not in st.session_state:
-        st.session_state.ai_dataset = None
+    if "error" not in st.session_state:
+        st.session_state.error = None
+    if "llm_warning" not in st.session_state:
+        st.session_state.llm_warning = None
 
 
 def get_cfg() -> AppConfig:
@@ -37,8 +38,12 @@ def get_store() -> DatasetStore:
 
 def get_pipeline() -> AnalysisPipeline:
     init_state()
-    if "pipeline" not in st.session_state:
+    if (
+        "pipeline" not in st.session_state
+        or st.session_state.get("pipeline_cfg") is not st.session_state.cfg
+    ):
         st.session_state.pipeline = AnalysisPipeline(st.session_state.cfg)
+        st.session_state.pipeline_cfg = st.session_state.cfg
     return st.session_state.pipeline
 
 

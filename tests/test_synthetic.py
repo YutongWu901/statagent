@@ -59,6 +59,44 @@ def test_config_overrides():
     assert cfg.llm.temperature == 0.5
 
 
+# ---- Bug 3 regressions: .env loading and key compatibility ------------------
+
+def test_key_alias_and_prefix_precedence():
+    cfg = load_config({"DEEPSEEK_API_KEY": "sk-plain"})
+    assert cfg.llm.api_key == "sk-plain"
+    assert cfg.llm.is_configured
+    # The STATAGENT_ prefix wins when both are present.
+    cfg2 = load_config({"DEEPSEEK_API_KEY": "sk-plain",
+                        "STATAGENT_DEEPSEEK_API_KEY": "sk-prefixed"})
+    assert cfg2.llm.api_key == "sk-prefixed"
+
+
+def test_dotenv_file_loaded_from_override_path(tmp_path, monkeypatch):
+    """STATAGENT_ENV_FILE must load a .env from any location, and real
+    environment variables must be untouched afterwards (no key leakage)."""
+    env_file = tmp_path / "custom.env"
+    env_file.write_text("STATAGENT_DEEPSEEK_API_KEY=sk-from-file\n", encoding="utf-8")
+    monkeypatch.delenv("STATAGENT_DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.setenv("STATAGENT_ENV_FILE", str(env_file))
+
+    from statagent.config import _load_dotenv_file
+
+    _load_dotenv_file()
+    cfg = load_config()
+    assert cfg.llm.api_key == "sk-from-file"
+    assert cfg.llm.is_configured
+    assert cfg.llm_mode == "live"
+    assert cfg.llm.base_url == "https://api.deepseek.com"
+    assert cfg.llm.model == "deepseek-chat"
+
+
+def test_project_root_env_file_path():
+    from statagent.config import _env_file
+
+    assert _env_file().name == ".env"
+
+
 def test_parse_json_tolerates_fences():
     assert parse_json('```json\n{"a": 1}\n```') == {"a": 1}
     assert parse_json('here is {"a": 1} ok') == {"a": 1}

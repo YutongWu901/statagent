@@ -49,12 +49,34 @@ def has_causal_claim(text: str) -> bool:
 
 NULL_CLAIM_PATTERNS = [
     r"\bproves? (that )?there is no (effect|difference|relationship)\b",
-    r"\bno (effect|difference|association) exists\b",
+    r"\bno (effect|difference|association|relationship) exists\b",
     r"\bconfirms? the null\b",
     r"\b证明.{0,10}(没有|无)(效果|差异|关系|影响)\b",
     r"\b不存在(差异|效果|关系)\b",
 ]
 NULL_CLAIM_RE = re.compile("|".join(NULL_CLAIM_PATTERNS), re.IGNORECASE)
+#: Words that negate a null-hypothesis claim in the preceding context:
+#: "…insufficient evidence to detect an effect, NOT that no effect exists."
+NULL_CLAIM_NEGATION_RE = re.compile(
+    r"\b(not|never|cannot|can't|doesn't|don't|isn't|rather than|不代表|不意味着|并非)\b",
+    re.IGNORECASE,
+)
+
+
+def null_claim_matches(text: str) -> list[re.Match]:
+    """Occurrences of "there is no effect" style claims that are NOT negated
+    by the surrounding context. Correct disclaimers like "not that no effect
+    exists" are excluded."""
+    out = []
+    for m in NULL_CLAIM_RE.finditer(text):
+        window = text[max(0, m.start() - 40) : m.end()]
+        if not NULL_CLAIM_NEGATION_RE.search(window):
+            out.append(m)
+    return out
+
+
+def has_null_claim(text: str) -> bool:
+    return bool(null_claim_matches(text))
 
 CI_MISUSE_PATTERNS = [
     r"95% (probability|chance) (that|the).{0,40}(parameter|mean|true value)",
@@ -182,14 +204,15 @@ def _rule_interp_03_null_claim(ctx: ValidationContext) -> Finding | None:
             non_significant = False
     if not non_significant:
         return None
-    match = NULL_CLAIM_RE.search(ctx.interpretation_text)
-    if match:
+    matches = null_claim_matches(ctx.interpretation_text)
+    if matches:
+        m = matches[0]
         return ctx.finding(
             "INTERP-03", "INTERP", "FAIL",
             "The interpretation claims the null hypothesis (no effect / no "
             "difference) is proven, but a non-significant result cannot prove "
             "the null.",
-            f"Matched text: …{ctx.interpretation_text[max(0, match.start() - 40):match.end() + 40]}…",
+            f"Matched text: …{ctx.interpretation_text[max(0, m.start() - 40):m.end() + 40]}…",
             "Say the evidence is insufficient to detect an effect, and report "
             "the confidence interval to show what effect sizes remain plausible.",
         )

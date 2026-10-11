@@ -18,19 +18,21 @@ if len(store) == 0:
 pipe = get_pipeline()
 
 
-def _handle_outcome(out, store, question: str | None = None, dataset: str | None = None) -> None:
+def _handle_outcome(out, store, question: str, dataset: str) -> None:
+    """Route an AnalysisOutcome into session state for the next rerun."""
+    st.session_state.error = None
     if out.status == "clarification_needed":
         st.session_state.pending = {
             "status": "clarification",
-            "question": question or st.session_state.ai_question,
-            "dataset": dataset or st.session_state.ai_dataset,
+            "question": question,
+            "dataset": dataset,
             "questions": out.questions,
             "plan": out.plan,
         }
     elif out.status == "blocked":
         st.session_state.blocked = {
-            "question": question or st.session_state.ai_question,
-            "dataset": dataset or st.session_state.ai_dataset,
+            "question": question,
+            "dataset": dataset,
             "validation": out.validation,
         }
     elif out.status == "completed" and out.record is not None:
@@ -39,6 +41,30 @@ def _handle_outcome(out, store, question: str | None = None, dataset: str | None
         st.session_state.blocked = None
     else:
         st.session_state.error = out.error or "analysis failed"
+    if getattr(out, "llm_warning", None):
+        st.session_state.llm_warning = out.llm_warning
+
+
+def _set_example(text: str) -> None:
+    """Example-button callback: fill the question box before it renders.
+
+    Runs while the button widget is being created, i.e. before the text area
+    below is instantiated, so setting its session-state key here is the
+    supported way to prefill it (writing to a widget's key after the widget
+    exists raises StreamlitAPIException).
+    """
+    st.session_state.question_input = text
+    st.session_state.pending = None
+    st.session_state.blocked = None
+    st.session_state.error = None
+
+
+def _clear_question() -> None:
+    st.session_state.question_input = ""
+    st.session_state.pending = None
+    st.session_state.blocked = None
+    st.session_state.error = None
+
 
 left, right = st.columns([2, 1], vertical_alignment="bottom")
 with left:
@@ -50,8 +76,22 @@ with right:
         mode = st.session_state.pipeline.llm_meta()["mode"]
         st.markdown({"live": badge("LLM: live"), "offline": badge("LLM: offline fallback")}.get(mode, ""), unsafe_allow_html=True)
 
+example_questions = [
+    "Is study time associated with exam score?",
+    "Does the new teaching method produce higher posttest scores than the traditional method?",
+    "Is smoking associated with hypertension?",
+    "Predict monthly spending from income and education years.",
+]
+examples = st.columns(4)
+for i, (col, ex) in enumerate(zip(examples, example_questions)):
+    col.button(
+        ex[:28] + "…", key=f"example_{i}", on_click=_set_example, args=(ex,),
+        use_container_width=True,
+    )
+
 question = st.text_area(
     "Research question",
+    key="question_input",
     placeholder=(
         "e.g. “Is study time associated with exam score?” · "
         "“Does the new teaching method produce higher scores than the traditional one?” · "
@@ -60,30 +100,14 @@ question = st.text_area(
     height=90,
 )
 
-examples = st.columns(4)
-example_questions = [
-    "Is study time associated with exam score?",
-    "Does the new teaching method produce higher posttest scores than the traditional method?",
-    "Is smoking associated with hypertension?",
-    "Predict monthly spending from income and education years.",
-]
-for col, ex in zip(examples, example_questions):
-    if col.button(ex[:28] + "…", key=f"ex_{ex[:12]}", use_container_width=True):
-        st.session_state.ai_question = ex
-        st.session_state.ai_dataset = dataset_id
-        st.session_state.pending = None
-        st.session_state.blocked = None
-
-if st.session_state.ai_question:
-    question = st.session_state.ai_question
+if st.session_state.get("error"):
+    st.error(st.session_state.error)
+if st.session_state.get("llm_warning"):
+    st.warning(f"LLM API issue — offline fallback used: {st.session_state.llm_warning}")
 
 run_col, clear_col = st.columns([1, 4])
 run = run_col.button("Run analysis", type="primary", use_container_width=True)
-if clear_col.button("Clear", use_container_width=False):
-    st.session_state.ai_question = ""
-    st.session_state.pending = None
-    st.session_state.blocked = None
-    st.rerun()
+clear_col.button("Clear", on_click=_clear_question, use_container_width=False)
 
 # ---- clarification loop ----------------------------------------------------
 pending = st.session_state.pending
@@ -115,7 +139,7 @@ if pending is not None and pending.get("status") == "clarification":
                 for i, q in enumerate(pending["questions"])
             ],
         )
-        _handle_outcome(out, store)
+        _handle_outcome(out, store, pending["question"], pending["dataset"])
         st.rerun()
     st.stop()
 
@@ -132,7 +156,7 @@ if blocked is not None:
         out = pipe.analyze(
             blocked["question"], store, blocked["dataset"], force=True
         )
-        _handle_outcome(out, store)
+        _handle_outcome(out, store, blocked["question"], blocked["dataset"])
         st.rerun()
     if st.button("Discard"):
         st.session_state.blocked = None
@@ -144,7 +168,7 @@ if run and question.strip():
     st.session_state.pending = None
     st.session_state.blocked = None
     out = pipe.analyze(question, store, dataset_id)
-    _handle_outcome(out, store, question=question, dataset=dataset_id)
+    _handle_outcome(out, store, question, dataset_id)
     st.rerun()
 
 

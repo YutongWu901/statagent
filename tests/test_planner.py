@@ -171,3 +171,74 @@ def test_heuristic_explicit_method_name_wins():
         profile_of(gen_health_survey()),
     )
     assert plan.steps[0].tool == "chi_square_test"
+
+
+# ---- Bug 1 regressions: "Is study time associated with exam score?" ---------
+
+def bug1_dataframe():
+    """The exact user-reported data: hours 1..10, score 10..100."""
+    import pandas as pd
+
+    return pd.DataFrame({"hours": range(1, 11), "score": range(10, 110, 10)})
+
+
+def test_bug1_association_question_picks_pearson():
+    plan = HeuristicPlanner().plan(
+        "Is study time associated with exam score?", profile_of(bug1_dataframe())
+    )
+    assert plan.steps, plan.limitations
+    step = plan.steps[0]
+    assert step.tool == "correlation_test"
+    assert step.parameters["method"] == "pearson"
+    assert set(step.parameters) >= {"x", "y"}
+    assert {step.parameters["x"], step.parameters["y"]} == {"hours", "score"}
+
+
+def test_bug1_synonym_matching_time_to_hours():
+    plan = HeuristicPlanner().plan(
+        "Does the time spent studying relate to the score achieved?",
+        profile_of(bug1_dataframe()),
+    )
+    assert plan.steps and plan.steps[0].tool == "correlation_test"
+
+
+def test_heuristic_association_fallback_when_only_one_column_matched():
+    """Only 'score' is name-matched; with exactly two numeric columns the
+    planner must still associate both instead of describing one."""
+    import pandas as pd
+
+    df = pd.DataFrame({"workload": range(1, 11), "score": range(10, 110, 10)})
+    plan = HeuristicPlanner().plan(
+        "Is study time associated with exam score?", profile_of(df)
+    )
+    assert plan.steps and plan.steps[0].tool == "correlation_test"
+    assert {plan.steps[0].parameters["x"], plan.steps[0].parameters["y"]} == {"workload", "score"}
+
+
+def test_heuristic_relation_with_categorical_pair_not_correlation():
+    """A relation question between two categoricals must stay chi-square even
+    when the dataset also has exactly two numeric columns."""
+    plan = HeuristicPlanner().plan(
+        "Is smoking associated with hypertension?", profile_of(gen_health_survey())
+    )
+    assert plan.steps[0].tool == "chi_square_test"
+
+
+def test_heuristic_no_matching_variables_reports_clearly():
+    """Intent present but no column matches: fail loudly, don't summarize."""
+    plan = HeuristicPlanner().plan(
+        "Is smoking associated with hypertension?", profile_of(bug1_dataframe())
+    )
+    assert plan.steps == []
+    assert any("Could not find any columns" in lim for lim in plan.limitations)
+    assert plan.goal == "No matching variables found"
+
+
+def test_planner_records_llm_error_and_falls_back():
+    mock = MockLLM().on(lambda m: True, lambda m: LLMResponse(content="garbage{{"))
+    agent = PlannerAgent(mock)
+    plan = agent.plan("Is study time associated with exam score?",
+                      profile_of(gen_study_hours()))
+    assert plan.steps[0].tool == "correlation_test"  # heuristic fallback worked
+    assert agent.last_error is not None
+    assert any("heuristic fallback" in lim for lim in plan.limitations)

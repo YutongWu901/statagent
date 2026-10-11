@@ -138,6 +138,9 @@ TTEST = [("ttest_two_sample", {})]
 #: Forbidden-pattern marker: a causal *claim* anywhere in the interpretation
 #: (caveats like "does not imply causation" are correctly allowed).
 CAUSAL_FORBIDDEN = ["CAUSAL_CLAIM"]
+#: Forbidden-pattern marker: an unnegated "there is no effect" claim
+#: (disclaimers like "not that no effect exists" are correctly allowed).
+NULL_CLAIM_FORBIDDEN = ["NULL_CLAIM"]
 ASSOC_CAVEAT = [[
     "associat", "does not imply causation",
     r"correlation.{0,40}(not|no).{0,10}caus", "相关不等于因果", "关联",
@@ -509,7 +512,7 @@ TASKS += [
       method="correlation_test", allowed=["correlation_test"],
       design={"sample_type": "single", "study_design": "observational", "causal_question": False},
       required=[r"insufficient|no (significant )?evidence|not significant|不显著|证据不足"],
-      forbidden=[r"no (effect|association|relationship)|不存在(关系|关联|差异)|证明.{0,10}(没有|无)"],
+      forbidden=NULL_CLAIM_FORBIDDEN,
       title="Interpretation: p>0.05 is not proof of no effect"),
     T("IE-02", "interpretation_error", "study_hours",
       "Is study time associated with exam score?",

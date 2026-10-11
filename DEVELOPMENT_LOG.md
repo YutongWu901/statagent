@@ -3,6 +3,98 @@
 Chronological record of significant decisions, bugs found and fixes made
 during the build. Written as the work happened, not retrofitted.
 
+## 2026-10-11 — Bug-fix session (user-reported issues)
+
+### Bug 1 — association question planned describe_variable instead of Pearson
+
+Reproduced with the user's data (`hours` 1..10, `score` 10..100):
+`"Is study time associated with exam score?"` planned
+`describe_variable(score)`. Three root causes, all fixed:
+
+1. The ordinal name-hint regex contained `score|grade`, so a column literally
+   named `score` (n_unique ≤ 10) was typed `categorical_ordinal`.
+   → removed `score`/`grade` from the hints; outcomes named "score" are now
+   continuous.
+2. `_DISCRETE_MAX_UNIQUE = 10` typed `hours = 1..10` as discrete, pushing
+   correlation toward Spearman. → lowered to 5; rounded continuous data
+   stays continuous (Likert scales are still caught by the name hints).
+3. The planner could not associate "study time" with the `hours` column and
+   gave up after matching only `score`. → added a small question→column
+   synonym table (time→hours, grade/result→score, income↔salary) plus a
+   fallback: an association question with ≥1 matched column on a dataset
+   with exactly two numeric columns now correlates both columns instead of
+   describing one. The synonym table is directional (question words map to
+   column tokens); the first draft had it backwards, which briefly broke
+   MS-09 in the benchmark and was caught by the full-suite rerun.
+
+Also added: when the question shows clear analytic intent but no column can
+be matched at all, the pipeline now returns an explicit error
+("Could not find any columns matching the variables in the question.
+Available columns: …") instead of silently summarizing an unrelated column.
+
+Verification: end-to-end run on the user's data now plans
+`correlation_test(method=pearson, x=hours, y=score)` and computes
+**r = 1.000** (p < 1e-6). Regression tests in `test_planner.py`,
+`test_profiler.py`, `test_pipeline.py`.
+
+### Bug 2 — INTERP-03 false positive on a correct disclaimer
+
+`"…insufficient evidence to detect an effect, not that no effect exists."`
+was flagged as "proving the null" by the regex
+`\bno (effect|…) exists\b`. → INTERP-03 now uses negation-aware matching
+(`null_claim_matches`): a claim is only counted when the preceding context
+contains no negation ("not", "cannot", "rather than", "不代表", "并非"…).
+The benchmark rubric for IE-01 uses the same helper via the `NULL_CLAIM`
+forbidden-marker, so correct disclaimers no longer lose interpretation
+points. Positive/negative/boundary tests added in `test_validation.py`,
+`test_interpreter.py`, `test_benchmark.py`.
+
+### Bug 3 — .env existed but the UI stayed offline
+
+`load_dotenv()` was called with no path, so it searched the *process working
+directory* — launching the app from anywhere other than the project root
+silently skipped the `.env`. → the loader now reads
+`<project root>/.env` explicitly (override via `STATAGENT_ENV_FILE`), and
+`load_config()` reloads it so restarts pick up edits. Both
+`DEEPSEEK_API_KEY` and `STATAGENT_DEEPSEEK_API_KEY` work (the prefixed one
+wins). API failures now surface in the UI: `PlannerAgent` records
+`last_error`, the pipeline propagates it as `outcome.llm_warning`, and the
+AI Analysis page shows a warning banner ("LLM API issue — offline fallback
+used: …") instead of failing silently into the heuristic. Session config is
+refreshed on every rerun so a restarted app immediately reflects `.env`.
+
+Verified live: the user's `.env` was loaded without reading its contents;
+the sidebar now shows 🟢 live / deepseek-chat; one **minimal real API call**
+succeeded (9+1 tokens, "OK", $0.000004) — the key is never logged and
+`.env` stays gitignored. New tests in `test_synthetic.py` cover the env-file
+override and key precedence.
+
+### Bug 4 — example buttons did not fill the question box
+
+The text area had no explicit key (auto-keyed by label) while the buttons
+wrote to `st.session_state.ai_question` — the box kept its own empty state,
+Clear couldn't clear the box, and Run preferred the stale session value
+over edits. → the box now has key `question_input`; the four example
+buttons and Clear use `on_click` callbacks that set the key *before* the
+widget is instantiated (the supported Streamlit pattern — writing to a
+widget key after instantiation raises StreamlitAPIException). Run uses the
+widget's current value. Verified by 8 new `AppTest` tests
+(`tests/test_ui_ai_analysis.py`: all four buttons fill, consecutive
+switching, manual edits, Clear, Run-uses-current-question, variable
+mismatch error, rerun persistence). Browser note: the buttons were verified
+in the earlier session and the page renders correctly; in this session the
+IAB automation could not open the demo-dataset selectbox popover (all
+interaction channels timed out) so the literal in-browser click pass for
+Bug 4 relies on the AppTest coverage plus the earlier browser verification
+of the same page.
+
+### Regression checks
+
+- `pytest`: **180 passed** (~17 s).
+- 60-task offline benchmark (new `--offline` CLI flag): C numeric accuracy
+  100%, invalid-analysis rate 0%, clarification rate 100%; B 93%/3%;
+  results archived in `runs/benchmark/smoke60/`.
+
 ## 2026-10-11 — Initial build (single session, ~4.5 hours)
 
 ### Environment

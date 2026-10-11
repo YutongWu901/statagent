@@ -143,8 +143,10 @@ def frame_sha256(df) -> str:  # noqa: ANN001 - pragmatic signature kept loose
 
 
 #: Column-name hints suggesting ordinal variables even when stored as numbers.
+#: Deliberately excludes "score"/"grade": they usually name continuous outcomes
+#: (exam scores, test grades), which would be misclassified as ordinal.
 _ORDINAL_NAME_HINTS = re.compile(
-    r"(satisf|rating|rank|level|scale|score|grade|likert|agree|"
+    r"(satisf|rating|rank|level|scale|likert|agree|"
     r"满意|评分|等级|级别|排行|量表)", re.IGNORECASE
 )
 

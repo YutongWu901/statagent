@@ -238,6 +238,52 @@ def test_interp03_nonsignificant_claimed_no_effect():
     assert s["INTERP-03"] == "FAIL"
 
 
+# ---- Bug 2 regressions: negation-aware null-claim detection -----------------
+
+def _nonsignificant_ctx(interp: str) -> ValidationContext:
+    from statagent.models.results import StepResult, ToolResult
+
+    step = StepResult(step_id=1, tool="correlation_test",
+                      result=ToolResult(tool="correlation_test", ok=True,
+                                        summary={"p_value": 0.42}))
+    return make_ctx(design=StudyDesign(study_design="observational"),
+                    steps=[step], interp=interp)
+
+
+def interp03_status(interp: str):
+    s = {f.rule_id: f.status for f in engine.validate_interpretation(_nonsignificant_ctx(interp)).findings}
+    return s.get("INTERP-03")
+
+
+def test_bug2_correct_disclaimer_not_flagged():
+    """The exact user-reported sentence must NOT trigger INTERP-03."""
+    disclaimer = (
+        "A non-significant result means the evidence is insufficient to "
+        "detect an effect, not that no effect exists."
+    )
+    assert interp03_status(disclaimer) != "FAIL"
+
+
+def test_bug2_cannot_conclude_disclaimer_not_flagged():
+    assert interp03_status(
+        "We cannot conclude there is no effect from this sample."
+    ) != "FAIL"
+
+
+def test_bug2_plain_null_claim_still_flagged():
+    assert interp03_status("The data show no effect exists.") == "FAIL"
+    assert interp03_status("This proves that there is no difference between the groups.") == "FAIL"
+
+
+def test_bug2_null_claim_helpers():
+    from statagent.validation.rules_interp import has_null_claim
+
+    assert not has_null_claim("...insufficient evidence, not that no effect exists.")
+    assert has_null_claim("The results confirm no effect exists.")
+    assert not has_null_claim("We cannot say there is no relationship between them.")
+    assert not has_null_claim("")
+
+
 def test_interp04_ci_misinterpretation():
     ctx = make_ctx(interp="There is a 95% probability that the true mean lies in this interval.")
     s = {f.rule_id: f.status for f in engine.validate_interpretation(ctx).findings}
