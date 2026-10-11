@@ -48,11 +48,7 @@ def infer_variable_type(series: pd.Series, name: str) -> tuple[VariableType, pd.
             return VariableType.BINARY, None
         if _ORDINAL_NAME_HINTS.search(name) and n_unique <= _DISCRETE_MAX_UNIQUE:
             return VariableType.CATEGORICAL_ORDINAL, None
-        if (
-            n_unique <= _DISCRETE_MAX_UNIQUE
-            and _is_integer_like(valid)
-            and (n_unique <= 4 or not _ID_NAME_HINTS.search(name))
-        ):
+        if n_unique <= _DISCRETE_MAX_UNIQUE and not _ID_NAME_HINTS.search(name):
             return VariableType.NUMERIC_DISCRETE, None
         return VariableType.NUMERIC_CONTINUOUS, None
 

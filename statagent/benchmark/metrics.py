@@ -93,11 +93,16 @@ def method_correct(task: TaskSpec, outcome: dict[str, Any]) -> bool | None:
 def invalid_matcher_hit(task: TaskSpec, outcome: dict[str, Any]) -> bool:
     """Did the system execute an analysis the ground truth marks invalid?"""
     if outcome.get("system") == "A_llm_only":
+        from statagent.validation.rules_interp import has_causal_claim
+
         text = outcome.get("interpretation", "")
-        return any(
-            re.search(pattern, text, re.IGNORECASE)
-            for pattern in task.ground_truth.forbidden_patterns
-        )
+        for pattern in task.ground_truth.forbidden_patterns:
+            if pattern == "CAUSAL_CLAIM":
+                if has_causal_claim(text):
+                    return True
+            elif re.search(pattern, text, re.IGNORECASE):
+                return True
+        return False
     selected = outcome.get("method_selected")
     if not selected:
         return False
@@ -109,19 +114,29 @@ def invalid_matcher_hit(task: TaskSpec, outcome: dict[str, Any]) -> bool:
     return False
 
 
+def _item_satisfied(item: Any, text: str) -> bool:
+    """A rubric item matches if any of its alternative patterns match."""
+    alternatives = item if isinstance(item, list) else [item]
+    return any(re.search(p, text, re.IGNORECASE) for p in alternatives)
+
+
 def interpretation_score(task: TaskSpec, outcome: dict[str, Any]) -> float:
+    from statagent.validation.rules_interp import has_causal_claim
+
     text = outcome.get("interpretation") or ""
-    items = task.ground_truth.required_points + [
-        f"!{p}" for p in task.ground_truth.forbidden_patterns
-    ]
+    items: list[Any] = list(task.ground_truth.required_points)
+    items += [f"!{p}" if p != "CAUSAL_CLAIM" else "!CAUSAL_CLAIM" for p in task.ground_truth.forbidden_patterns]
     if not items:
         return 1.0
     ok = 0
     for item in items:
-        if item.startswith("!"):
+        if item == "!CAUSAL_CLAIM":
+            if not has_causal_claim(text):
+                ok += 1
+        elif isinstance(item, str) and item.startswith("!"):
             if not re.search(item[1:], text, re.IGNORECASE):
                 ok += 1
-        elif re.search(item, text, re.IGNORECASE):
+        elif _item_satisfied(item, text):
             ok += 1
     return ok / len(items)
 

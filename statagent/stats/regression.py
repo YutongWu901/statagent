@@ -36,7 +36,7 @@ def _vif(x_matrix: np.ndarray, names: list[str]) -> dict[str, float]:
         ss_res = float(resid @ resid)
         ss_tot = float(((y_j - y_j.mean()) ** 2).sum())
         r2j = 1 - ss_res / ss_tot if ss_tot > 0 else 0.0
-        out[names[j]] = float("inf") if r2j >= 0.9999 else round(1 / (1 - r2j), 3)
+        out[names[j]] = 1e6 if r2j >= 0.9999 else round(1 / (1 - r2j), 3)
     return out
 
 
@@ -169,7 +169,7 @@ def linear_regression(store: DatasetStore, params: RegressionParams) -> dict:
         notes.append("Breusch-Pagan p < 0.05: heteroscedastic residuals (non-constant variance).")
     if p_jb < 0.05:
         notes.append("Jarque-Bera p < 0.05: residuals deviate from normality.")
-    high_vif = {k_: v for k_, v in vif.items() if np.isfinite(v) and v > 10}
+    high_vif = {k_: v for k_, v in vif.items() if v > 10}
     if high_vif:
         notes.append(f"High VIF (collinearity): {high_vif}.")
     if dummy_map:
@@ -249,6 +249,8 @@ def linear_regression(store: DatasetStore, params: RegressionParams) -> dict:
         "coefficients": {
             r["variable"]: {
                 "coefficient": r["coefficient"],
+                "se": r["se"],
+                "t": r["t"],
                 "p_value": r["p_value"],
                 "ci95": r["ci95"],
             }

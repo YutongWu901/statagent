@@ -199,7 +199,7 @@ def _rule_method_05_collinearity(ctx: ValidationContext) -> Finding | None:
         from statagent.stats.regression import _vif
 
         vif = _vif(X, ["Intercept"] + num_x)
-        high = {k: v for k, v in vif.items() if np.isfinite(v) and v > 10}
+        high = {k: v for k, v in vif.items() if v > 10}
         if high:
             return ctx.finding(
                 "METHOD-05", "METHOD", "WARNING",

@@ -338,7 +338,7 @@ class HeuristicPlanner:
             explicit = "ttest_one_sample"
         elif re.search(r"paired|配对", q) and re.search(r"t[- ]?test|t检验", q):
             explicit = "ttest_paired"
-        elif re.search(r"t[- ]?test|welch|t检验", q):
+        elif re.search(r"\bt[- ]?test|welch|\bt检验", q):
             explicit = "ttest_two_sample"
         elif re.search(r"\bpearson\b", q):
             explicit = "correlation_pearson"
@@ -390,6 +390,13 @@ class HeuristicPlanner:
             goal = f"Paired t-test: {a_col} vs {b_col}"
         elif explicit == "ttest_two_sample" and num_col and group_col:
             a, b = group_pair(group_col)
+            if design.sample_type == "unknown":
+                ask("sample_type",
+                    f"Are the two groups in '{group_col.name}' independent samples, "
+                    "or paired/repeated measurements?",
+                    ["independent", "paired"],
+                    "The correct test differs: Welch t-test for independent "
+                    "samples vs paired t-test for matched data.")
             if num_col.variable_type == VariableType.CATEGORICAL_ORDINAL or skewed:
                 add("mann_whitney_u",
                     {"column": num_col.name, "group_column": group_col.name, "group_a": a, "group_b": b},

@@ -10,7 +10,7 @@ from plotly.subplots import make_subplots
 from scipy import stats
 
 from statagent.data.store import DatasetStore
-from statagent.stats.common import COLOR, base_figure, code_snippet, get_series, to_numeric
+from statagent.stats.common import COLOR, COLOR_2, base_figure, code_snippet, get_series, to_numeric
 from statagent.stats.engine import Params, ToolRegistry
 
 

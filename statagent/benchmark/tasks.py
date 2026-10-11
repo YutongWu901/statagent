@@ -135,8 +135,13 @@ def ref_one(df: pd.DataFrame, col: str, mu0: float) -> dict[str, float]:
 
 PEARSON_TRAP = [("correlation_test", {"method": "pearson"})]
 TTEST = [("ttest_two_sample", {})]
-CAUSAL_FORBIDDEN = [r"\bcaus", r"导致", r"因果"]
-ASSOC_CAVEAT = [r"associat", r"correlation.{0,40}(not|no).{0,10}caus", r"相关", r"关联"]
+#: Forbidden-pattern marker: a causal *claim* anywhere in the interpretation
+#: (caveats like "does not imply causation" are correctly allowed).
+CAUSAL_FORBIDDEN = ["CAUSAL_CLAIM"]
+ASSOC_CAVEAT = [[
+    "associat", "does not imply causation",
+    r"correlation.{0,40}(not|no).{0,10}caus", "相关不等于因果", "关联",
+]]
 
 
 def T(

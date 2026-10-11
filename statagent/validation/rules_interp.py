@@ -17,15 +17,35 @@ import numpy as np
 from statagent.models.results import Finding
 from statagent.validation.context import ValidationContext
 
-_NUMBER_RE = re.compile(r"(?<![\w.])([-+]?\d+\.\d+(?:[eE][-+]?\d+)?|[-+]?\d+)(?![\w.])")
+_NUMBER_RE = re.compile(
+    r"(?<![\w.])([-+]?\d+\.\d+(?:[eE][-+]?\d+)?|[-+]?\d+)(?!\w|\.\d)"
+)
 
 CAUSAL_PATTERNS = [
-    r"\bcauses?\b", r"\bcaused\b", r"\bcausing\b", r"\b因果",
-    r"\bleads? to\b", r"\bdrives\b", r"\b结果是.{0,6}(导致|造成)\b",
-    r"\b导致\b", r"\b引起\b", r"\b使得\b.{0,10}(提高|降低|改善|恶化)\b",
+    r"\bcaus\w*", r"导致", r"引起", r"造成",
+    r"\bleads? to\b", r"\bdrives\b", r"使得.{0,10}(提高|降低|改善|恶化)",
     r"\bincreases\b.{0,20}\b(due to|because)\b",
 ]
 CAUSAL_RE = re.compile("|".join(CAUSAL_PATTERNS), re.IGNORECASE)
+NEGATION_RE = re.compile(
+    r"\b(not|no|cannot|can't|never|doesn't|don't|without|不|不能|无法|非|无)\b",
+    re.IGNORECASE,
+)
+
+
+def causal_claim_matches(text: str) -> list[re.Match]:
+    """Causal *claims* in text — caveats like 'does not imply causation'
+    contain the word but are not claims and are excluded."""
+    out = []
+    for m in CAUSAL_RE.finditer(text):
+        window = text[max(0, m.start() - 40) : m.end() + 40]
+        if not NEGATION_RE.search(window):
+            out.append(m)
+    return out
+
+
+def has_causal_claim(text: str) -> bool:
+    return bool(causal_claim_matches(text))
 
 NULL_CLAIM_PATTERNS = [
     r"\bproves? (that )?there is no (effect|difference|relationship)\b",
@@ -113,13 +133,14 @@ def _rule_interp_01_causal(ctx: ValidationContext) -> Finding | None:
         return None
     if ctx.design.study_design != "observational":
         return None
-    match = CAUSAL_RE.search(ctx.interpretation_text)
-    if match:
+    matches = causal_claim_matches(ctx.interpretation_text)
+    if matches:
+        m = matches[0]
         return ctx.finding(
             "INTERP-01", "INTERP", "FAIL",
             "The interpretation uses causal language although the design is "
             "observational.",
-            f"Matched text: …{ctx.interpretation_text[max(0, match.start() - 40):match.end() + 40]}…",
+            f"Matched text: …{ctx.interpretation_text[max(0, m.start() - 40):m.end() + 40]}…",
             "Observational data cannot establish causation. Rephrase in terms "
             "of associations and note that confounding may explain them.",
         )
@@ -234,7 +255,7 @@ def _rule_interp_06_causation_caveat(ctx: ValidationContext) -> Finding | None:
     is_assoc = any(t in {"correlation_test", "correlation_matrix", "linear_regression"} for t in tools)
     if not is_assoc:
         return None
-    question_causal = bool(CAUSAL_RE.search(ctx.question))
+    question_causal = has_causal_claim(ctx.question)
     if not question_causal and ctx.design.causal_question is not True:
         return None
     if CAVEAT_RE.search(ctx.interpretation_text):
